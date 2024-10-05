@@ -1,7 +1,9 @@
 import logging
-import asyncio  # Import asyncio
+import asyncio
 from telethon import TelegramClient, events
 from telethon import Button
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 
 # Konfigurasi logging
 logging.basicConfig(level=logging.INFO)
@@ -10,13 +12,13 @@ API_ID = '10711540'
 API_HASH = 'a4892a544176899feab0ac136561f73c'
 BOT_TOKEN = '8099888095:AAHnI8ChSMevwG3a2nIFn5SQUiE57Cw5UdA'
 
-# Initialize the client
+# Inisialisasi client
 client = TelegramClient('bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
 users = {}
 matches = {}
-waiting_for_match = {}  # Menyimpan pengguna yang sedang menunggu untuk mencocokkan
-waiting_timeout = 20  # Waktu tunggu dalam detik
+waiting_for_match = {}
+waiting_timeout = 20
 
 available_interests = ['Komik', 'Olahraga', 'Lukis', 'Musik', 'Manga', 'Anime', 'Game']
 
@@ -63,8 +65,6 @@ async def button_callback(event):
         else:
             await event.answer("Anda belum memilih minat. Silakan pilih terlebih dahulu.")
 
-    return
-
 @client.on(events.NewMessage(pattern='/match'))
 async def match(event):
     user = event.sender_id
@@ -72,41 +72,38 @@ async def match(event):
         await event.respond("Silakan mendaftar terlebih dahulu dengan /start.")
         return
 
-    # Jika pengguna sudah dalam antrian pencocokan
     if user in waiting_for_match:
         await event.respond("Anda sedang menunggu pencocokan. Silakan tunggu.")
         return
 
-    waiting_for_match[user] = asyncio.get_event_loop().time()  # Menyimpan waktu saat pengguna menggunakan /match
+    waiting_for_match[user] = asyncio.get_event_loop().time()
     await event.respond("Menunggu pengguna lain untuk mencocokkan...")
 
-    # Tunggu hingga 20 detik secara asinkron
     await asyncio.sleep(waiting_timeout)
 
-    # Cek apakah pengguna lain juga dalam antrian
     matched_user = None
     for uid in waiting_for_match:
-        if uid != user:  # Pastikan bukan pengguna itu sendiri
+        if uid != user:
             matched_user = uid
             break
 
     if matched_user:
         matches[user] = matched_user
         matches[matched_user] = user
-        del waiting_for_match[user]  # Hapus dari antrian
-        del waiting_for_match[matched_user]  # Hapus dari antrian
+        del waiting_for_match[user]
+        del waiting_for_match[matched_user]
         await event.respond(f"Anda terhubung dengan {users[matched_user]['username']}!")
         await client.send_message(matched_user, f"{users[user]['username']} telah terhubung dengan Anda!")
     else:
         await event.respond("Tidak ada pengguna lain yang cocok dalam waktu 20 detik.")
-        del waiting_for_match[user]  # Hapus dari antrian
+        del waiting_for_match[user]
 
 @client.on(events.NewMessage(pattern='/disconnect'))
 async def disconnect(event):
     user = event.sender_id
     if user in matches:
-        matched_user_id = matches.pop(user)  # Mengambil user yang match
-        matches.pop(matched_user_id, None)  # Hapus pasangan dari match dict
+        matched_user_id = matches.pop(user)
+        matches.pop(matched_user_id, None)
         await event.respond("Anda telah terputus dari teman bicara.")
         await client.send_message(matched_user_id, "Teman bicara Anda telah memutuskan koneksi.")
     else:
@@ -125,9 +122,25 @@ async def chat(event):
     else:
         await event.respond("Silakan kirim pesan biasa, bukan perintah.")
 
+# Dummy server for health check
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'Bot is running')
+
+def run_health_check_server():
+    port = 8000
+    server = HTTPServer(('', port), HealthCheckHandler)
+    logging.info(f"Serving health check on port {port}")
+    server.serve_forever()
+
 async def main():
     await client.start()
     logging.info("Bot sedang berjalan...")
+    # Start the health check server in a separate thread
+    health_check_thread = threading.Thread(target=run_health_check_server)
+    health_check_thread.start()
     await client.run_until_disconnected()
 
 if __name__ == '__main__':
